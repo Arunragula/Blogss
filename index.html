@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#fafaf7">
+  <meta id="meta-desc"  name="description"        content="DotComDaily — Thoughts that actually mean something.">
+  <meta id="og-title"   property="og:title"        content="DotComDaily">
+  <meta id="og-desc"    property="og:description"  content="Thoughts that actually mean something.">
+  <meta id="og-image"   property="og:image"        content="">
+  <meta id="og-url"     property="og:url"          content="">
+  <meta property="og:type"        content="article">
+  <meta name="twitter:card"       content="summary_large_image">
+  <meta name="twitter:site"       content="@dotcomdaily">
+  <title id="page-title">DotComDaily — Thoughts That Hit Different</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════
+     NAV
+═══════════════════════════════════════ -->
+<nav role="navigation" aria-label="Main navigation">
+  <div class="nav-inner">
+
+    <!-- Logo -->
+    <div class="logo" onclick="showPage('home')" role="link" tabindex="0"
+         onkeydown="if(event.key==='Enter')showPage('home')">
+      <span>.</span>com<span>daily</span>
+    </div>
+
+    <!-- Desktop nav links -->
+    <div class="nav-links" id="desktop-nav">
+      <button class="nav-btn active" id="nav-home"
+              onclick="showPage('home');setActive('nav-home')">Feed</button>
+      <button class="nav-btn" id="nav-products"
+              onclick="showPage('products');setActive('nav-products')">Products</button>
+
+      <!-- Desktop search -->
+      <div class="search-wrap">
+        <i class="ti ti-search search-icon" aria-hidden="true"></i>
+        <input class="search-input" type="search" id="search-input"
+               placeholder="Search…" aria-label="Search posts"
+               oninput="doSearch(this.value)"
+               onblur="setTimeout(()=>closeSearch(),200)" />
+        <div class="search-results hidden" id="search-results" role="listbox"></div>
+      </div>
+
+      <!-- RSS -->
+      <a class="rss-link" href="#" onclick="downloadRSS();return false;" title="Download RSS feed"
+         aria-label="RSS feed">
+        <i class="ti ti-rss" aria-hidden="true"></i> RSS
+      </a>
+    </div>
+
+    <!-- Mobile hamburger -->
+    <button class="hamburger" id="hamburger" onclick="toggleMenu()"
+            aria-label="Toggle menu" aria-expanded="false" aria-controls="mobile-drawer">
+      <span></span><span></span><span></span>
+    </button>
+
+  </div>
+</nav>
+
+<!-- Mobile drawer -->
+<div class="mobile-drawer" id="mobile-drawer" role="dialog" aria-label="Navigation menu">
+  <button class="nav-btn" onclick="showPage('home');setActive('nav-home');closeMenu()">
+    <i class="ti ti-home" style="margin-right:6px"></i>Feed
+  </button>
+  <button class="nav-btn" onclick="showPage('products');setActive('nav-products');closeMenu()">
+    <i class="ti ti-package" style="margin-right:6px"></i>Products
+  </button>
+
+  <!-- Mobile search -->
+  <div class="mobile-search search-wrap" style="margin-top:8px">
+    <i class="ti ti-search search-icon" aria-hidden="true"></i>
+    <input class="search-input" type="search" id="mobile-search-input"
+           placeholder="Search posts…" aria-label="Search posts"
+           oninput="doSearch(this.value)"
+           onblur="setTimeout(()=>closeSearch(),200)" />
+    <div class="search-results hidden" id="mobile-search-results" role="listbox"></div>
+  </div>
+
+  <a class="rss-link" href="#" onclick="downloadRSS();return false;" style="margin-top:4px">
+    <i class="ti ti-rss" aria-hidden="true"></i> RSS feed
+  </a>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     HOME PAGE
+═══════════════════════════════════════ -->
+<div id="page-home" class="page">
+
+  <div class="hero">
+    <h1>Thoughts that<br><em>actually mean something</em></h1>
+    <p>A daily dot of ideas, observations, and honest takes on everything — from tech to life.</p>
+    <div class="newsletter-bar">
+      <input type="email" id="email-sub" placeholder="your@email.com"
+             aria-label="Email address for newsletter" />
+      <button class="btn-primary" onclick="subscribe()">Subscribe</button>
+    </div>
+    <p style="font-size:12px;color:var(--ink3);margin-top:10px">
+      No spam. Just a dot in your inbox when something new drops.
+    </p>
+  </div>
+
+  <div class="section-label">Latest posts</div>
+  <div class="posts-grid" id="posts-grid" role="list"></div>
+
+  <!-- Drafts — admin only -->
+  <div class="drafts-section hidden" id="drafts-section">
+    <div class="drafts-section-header">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="section-label" style="margin-bottom:0">Drafts</div>
+        <span id="draft-count"
+              style="font-size:11px;background:#fef9e7;color:#b45309;padding:2px 8px;border-radius:20px;border:1px solid #fde68a">
+          0
+        </span>
+      </div>
+      <button class="btn-primary" style="font-size:13px;padding:8px 16px"
+              onclick="showPage('write')">+ New post</button>
+    </div>
+    <div class="drafts-grid" id="drafts-grid"></div>
+  </div>
+
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     SINGLE POST PAGE
+═══════════════════════════════════════ -->
+<div id="page-post" class="page hidden">
+  <div class="post-layout">
+    <div class="post-main" id="post-content"></div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     WRITE PAGE (admin only)
+═══════════════════════════════════════ -->
+<div id="page-write" class="write-page hidden">
+  <h2 id="write-heading">Write a new post</h2>
+  <p class="write-subtitle" id="write-subtitle">Draft autosaves every 30 seconds</p>
+  <input type="hidden" id="w-edit-id" value="" />
+
+  <div class="form-group">
+    <label for="w-title">Post title *</label>
+    <input type="text" id="w-title" placeholder="Something worth reading…" autocomplete="off" />
+  </div>
+
+  <div class="form-group">
+    <label for="w-cat">Category</label>
+    <select id="w-cat">
+      <option>Thoughts</option>
+      <option>Technology</option>
+      <option>Life</option>
+      <option>Business</option>
+      <option>Culture</option>
+      <option>Opinion</option>
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label>Cover image</label>
+    <div class="img-upload" onclick="document.getElementById('img-file').click()"
+         role="button" tabindex="0" aria-label="Upload cover image"
+         onkeydown="if(event.key==='Enter')document.getElementById('img-file').click()">
+      <i class="ti ti-photo-up" style="font-size:28px;color:var(--ink3);display:block;margin-bottom:8px"></i>
+      <div style="font-size:14px;color:var(--ink2)">Tap to upload a cover photo</div>
+      <div style="font-size:12px;color:var(--ink3);margin-top:4px">JPG, PNG, GIF up to 10MB</div>
+      <img id="img-preview-el" class="img-preview hidden" alt="Cover preview" />
+    </div>
+    <input type="file" id="img-file" accept="image/*" class="hidden"
+           onchange="previewImage(this)" aria-label="Upload cover image" />
+  </div>
+
+  <div class="form-group">
+    <label for="w-body">Write your post *</label>
+    <textarea id="w-body"
+      placeholder="Start writing…&#10;&#10;Formatting tips:&#10;  ## Heading — for section headings&#10;  > Quote   — for pull quotes&#10;  Leave a blank line between paragraphs."></textarea>
+  </div>
+
+  <div class="form-group">
+    <label for="w-seo">
+      SEO description
+      <span style="font-weight:400;color:var(--ink3)">(for search results &amp; social previews)</span>
+    </label>
+    <input type="text" id="w-seo" placeholder="One sentence that makes someone click…" />
+  </div>
+
+  <div class="write-actions">
+    <button class="btn-primary"   onclick="publishPost()">Publish</button>
+    <button class="btn-draft"     onclick="saveDraft()">Save draft</button>
+    <button class="btn-secondary" onclick="showPage('home')">Cancel</button>
+  </div>
+
+  <div class="autosave-note" id="autosave-note">
+    <i class="ti ti-circle-check" style="font-size:14px;color:var(--ink3)"></i>
+    <span id="autosave-txt">Autosave ready</span>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     PRODUCTS PAGE
+═══════════════════════════════════════ -->
+<div id="page-products" class="products-page hidden">
+  <div class="products-header">
+    <div>
+      <h1>Products</h1>
+      <p style="font-size:15px;color:var(--ink2);margin-top:5px">
+        Things worth your money and attention.
+      </p>
+    </div>
+    <button class="btn-primary hidden" id="add-product-btn"
+            onclick="openProductModal()">+ Add product</button>
+  </div>
+  <div class="products-grid" id="products-grid"></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     CONTRIBUTE MODAL
+═══════════════════════════════════════ -->
+<div id="modal-contribute" class="modal-overlay hidden"
+     onclick="closeContributeModal(event)" role="dialog" aria-modal="true"
+     aria-labelledby="contribute-title">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3 id="contribute-title">Support the writing ☕</h3>
+    <p>If a post made you think, laugh, or learn something — a small contribution keeps the dots coming.</p>
+    <div class="amount-grid">
+      <div class="amount-chip selected" onclick="selectAmount(this,'₹100')">₹100</div>
+      <div class="amount-chip"          onclick="selectAmount(this,'₹200')">₹200</div>
+      <div class="amount-chip"          onclick="selectAmount(this,'₹500')">₹500</div>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label for="custom-amount">Or enter a custom amount</label>
+      <input type="number" id="custom-amount" placeholder="₹ Enter amount"
+             inputmode="numeric" style="margin:0" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-primary" onclick="contribute()">Contribute via UPI</button>
+      <button class="btn-outline"
+              onclick="document.getElementById('modal-contribute').classList.add('hidden')">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     ADD / EDIT PRODUCT MODAL
+═══════════════════════════════════════ -->
+<div id="modal-product" class="modal-overlay hidden"
+     onclick="closeProductModal(event)" role="dialog" aria-modal="true"
+     aria-labelledby="product-modal-title">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3 id="product-modal-title">Add a product</h3>
+    <input type="hidden" id="p-edit-id" value="" />
+
+    <div class="form-group">
+      <label for="p-name">Product name *</label>
+      <input type="text" id="p-name"
+             placeholder="e.g. Notion, a great book, your favourite tool…" />
+    </div>
+    <div class="form-group">
+      <label for="p-desc">Description</label>
+      <textarea id="p-desc" style="min-height:80px"
+                placeholder="What makes it great? Why do you recommend it?"></textarea>
+    </div>
+    <div class="form-group">
+      <label for="p-price">
+        Price / label <span style="font-weight:400;color:var(--ink3)">(optional)</span>
+      </label>
+      <input type="text" id="p-price"
+             placeholder="e.g. ₹999/mo, Free, $49 one-time" />
+    </div>
+    <div class="form-group">
+      <label for="p-url">Link URL *</label>
+      <input type="url" id="p-url" placeholder="https://…" inputmode="url" />
+    </div>
+    <div class="form-group">
+      <label>Cover image</label>
+      <div class="img-upload" onclick="document.getElementById('p-img-file').click()"
+           style="padding:20px" role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter')document.getElementById('p-img-file').click()">
+        <i class="ti ti-photo-up" style="font-size:22px;color:var(--ink3);display:block;margin-bottom:6px"></i>
+        <div style="font-size:13px;color:var(--ink2)">Tap to upload image</div>
+        <img id="p-img-preview" class="img-preview hidden" alt="Product image preview" />
+      </div>
+      <input type="file" id="p-img-file" accept="image/*" class="hidden"
+             onchange="previewProductImage(this)" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-primary" onclick="saveProduct()">Save product</button>
+      <button class="btn-outline"
+              onclick="document.getElementById('modal-product').classList.add('hidden')">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
+
+
+<!-- App script -->
+<script src="script.js"></script>
+</body>
+</html>
