@@ -108,7 +108,7 @@ async function hydrateFromSupabase() {
       const comments = {};
       commentRows.forEach(r => {
         if (!comments[r.post_id]) comments[r.post_id] = [];
-        comments[r.post_id].push({ name: r.name || 'Anonymous', text: r.body, date: r.created_at });
+        comments[r.post_id].push({ id: r.id || makeId(), name: r.name || 'Anonymous', text: r.body, date: r.created_at });
       });
       save(COMMENTS_KEY, comments);
     }
@@ -137,8 +137,8 @@ async function syncDraftsToSupabase(drafts) {
 async function syncCommentsToSupabase(comments) {
   if (!supabaseClient) return;
   const entries = Object.entries(comments || {});
-  const rows = entries.flatMap(([postId, list]) => (list || []).map(c => ({
-    id: c.id || makeId(),
+  const rows = entries.flatMap(([postId, list]) => (list || []).filter(c => c.id).map(c => ({
+    id: c.id,
     post_id: postId,
     name: c.name || 'Anonymous',
     body: c.text || c.body || '',
@@ -268,8 +268,8 @@ function closeSearch() {
 function renderCard(post) {
   const v        = getViews()[post.id] || post.views || 0;
   const comments = (getComments()[post.id] || []).length;
-  const imgHtml  = post.img
-    ? `<div class="post-card-img"><img src="${post.img}" alt="${esc(post.title)}" loading="lazy"/></div>`
+  const imgHtml  = post.img && post.img.startsWith('http')
+    ? `<div class="post-card-img"><img src="${post.img}" alt="${esc(post.title)}" loading="lazy" onerror="this.parentElement.innerHTML='<i class=\"ti ti-article\" style=\"font-size:36px;color:#ccc\"></i>'"/></div>`
     : `<div class="post-card-img"><i class="ti ti-article" style="font-size:36px;color:#ccc"></i></div>`;
   const adminActions = isAdmin()
     ? `<div class="admin-card-actions">
@@ -402,7 +402,7 @@ function openPost(id) {
         </div>
       </div>
     </div>
-    ${imgHtml}
+    ${post.img && post.img.startsWith('http') ? `<img src="${post.img}" alt="${esc(post.title)}" class="post-hero-img" onerror="this.style.display='none'"/>` : ''}
     <div class="post-body">${parseBody(post.body)}</div>
 
     <div class="reaction-bar">
@@ -443,7 +443,7 @@ function openPost(id) {
           <input type="email" id="c-email" placeholder="Email (optional)" />
         </div>
         <textarea id="c-text" placeholder="Share your thoughts..." style="margin-bottom:10px"></textarea>
-        <button class="btn-primary" onclick="addComment('${id}')">Post comment</button>
+        <button type="button" class="btn-primary" onclick="addComment('${id}')">Post comment</button>
       </div>
       <div id="comments-list">${renderComments(comments)}</div>
     </div>
@@ -458,7 +458,15 @@ function openPost(id) {
 function renderComments(comments) {
   if (!comments.length)
     return `<p style="color:var(--ink3);font-size:14px;padding:14px 0">No comments yet — be the first!</p>`;
-  return comments.slice().reverse().map(c => `
+  // Deduplicate comments by ID to prevent duplicates from sync
+  const seen = new Set();
+  const unique = comments.filter(c => {
+    const key = c.id || (c.name + c.text + c.date);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return unique.slice().reverse().map(c => `
     <div class="comment-item">
       <div class="comment-author">${esc(c.name||'Anonymous')}</div>
       <div class="comment-time">${formatDate(c.date)}</div>
@@ -472,7 +480,7 @@ function addComment(postId) {
   if (!text) { showToast('Write something first!'); return; }
   const all = getComments();
   if (!all[postId]) all[postId] = [];
-  all[postId].push({ name, text, date: new Date().toISOString() });
+  all[postId].push({ id: makeId(), name, text, date: new Date().toISOString() });
   save(COMMENTS_KEY, all);
   document.getElementById('c-name').value  = '';
   document.getElementById('c-email').value = '';
@@ -547,18 +555,27 @@ function previewProductImage(input) {
 }
 
 async function uploadImageToSupabase(file, bucket) {
-  if (!file || !supabaseClient) return null;
+  if (!file || !supabaseClient) {
+    console.warn('Image upload skipped: file=' + !!file + ', supabaseClient=' + !!supabaseClient);
+    return null;
+  }
   try {
     const ext  = file.name.split('.').pop() || 'jpg';
     const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    console.log('Uploading image to Supabase:', path);
     const { error } = await supabaseClient.storage.from(bucket).upload(path, file, {
       cacheControl: '3600',
       upsert: false,
       contentType: file.type
     });
-    if (error) { console.error('Image upload error:', error.message); return null; }
+    if (error) { 
+      console.error('Image upload error:', error.message); 
+      return null; 
+    }
     const { data } = supabaseClient.storage.from(bucket).getPublicUrl(path);
-    return data?.publicUrl || null;
+    const publicUrl = data?.publicUrl;
+    console.log('Image uploaded successfully:', publicUrl);
+    return publicUrl || null;
   } catch (err) {
     console.error('Image upload failed:', err);
     return null;
@@ -603,7 +620,13 @@ async function publishPost() {
   if (_pendingCoverFile) {
     showToast('Uploading image…');
     const url = await uploadImageToSupabase(_pendingCoverFile, 'covers');
-    if (url) d.img = url;
+    if (url) {
+      d.img = url;
+      showToast('Image uploaded!');
+    } else {
+      console.warn('Image upload failed - publishing without image');
+      showToast('Warning: Image upload failed, publishing without image');
+    }
     _pendingCoverFile = null;
   }
 
@@ -630,7 +653,11 @@ async function saveDraft() {
   // Upload cover image if a new file is pending
   if (_pendingCoverFile) {
     const url = await uploadImageToSupabase(_pendingCoverFile, 'covers');
-    if (url) d.img = url;
+    if (url) {
+      d.img = url;
+    } else {
+      console.warn('Image upload failed - saving draft without image');
+    }
     _pendingCoverFile = null;
   }
 
