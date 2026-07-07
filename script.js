@@ -78,6 +78,7 @@ function mapSupabasePost(row) {
 
 async function hydrateFromSupabase() {
   if (!supabaseClient) return;
+  _hydrating = true;  // Prevent re-syncing while loading from Supabase
   try {
     const { data: postRows, error: postError } = await supabaseClient.from('posts').select('*').order('created_at', { ascending: false });
     if (!postError && postRows) {
@@ -120,6 +121,7 @@ async function hydrateFromSupabase() {
   } catch (err) {
     console.warn('Supabase sync warning:', err);
   }
+  _hydrating = false;  // Re-enable syncing
 }
 
 async function syncPostsToSupabase(posts) {
@@ -480,13 +482,31 @@ function addComment(postId) {
   if (!text) { showToast('Write something first!'); return; }
   const all = getComments();
   if (!all[postId]) all[postId] = [];
-  all[postId].push({ id: makeId(), name, text, date: new Date().toISOString() });
+  
+  // Prevent adding duplicate comments with same ID
+  const newCommentId = makeId();
+  const isDuplicate = all[postId].some(c => c.id === newCommentId);
+  if (isDuplicate) { showToast('Comment already exists'); return; }
+  
+  all[postId].push({ id: newCommentId, name, text, date: new Date().toISOString() });
   save(COMMENTS_KEY, all);
   document.getElementById('c-name').value  = '';
   document.getElementById('c-email').value = '';
   document.getElementById('c-text').value  = '';
-  document.getElementById('comments-list').innerHTML   = renderComments(all[postId]);
-  document.getElementById('comment-count-h').textContent = all[postId].length;
+  
+  // Render and update count
+  const comments = all[postId];
+  document.getElementById('comments-list').innerHTML = renderComments(comments);
+  
+  // Count deduplicated comments for accurate display
+  const seen = new Set();
+  const uniqueCount = comments.filter(c => {
+    const key = c.id || (c.name + c.text + c.date);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).length;
+  document.getElementById('comment-count-h').textContent = uniqueCount;
   showToast('Comment posted!');
 }
 
