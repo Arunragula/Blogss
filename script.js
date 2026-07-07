@@ -19,16 +19,38 @@ const supabaseClient = (typeof window !== 'undefined' && window.supabase && SUPA
   : null;
 
 const load = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
+let _hydrating = false;
+
 const save = (k, v) => {
-  localStorage.setItem(k, JSON.stringify(v));
-  // FIX 5: skip Supabase sync while hydrating (reading FROM Supabase)
+  // Strip base64 images before storing locally — they blow the 5MB quota fast.
+  // Images are uploaded to Supabase Storage and stored as URLs instead.
+  let localVal = v;
+  if ((k === POSTS_KEY || k === DRAFTS_KEY) && Array.isArray(v)) {
+    localVal = v.map(p => {
+      if (p.img && p.img.startsWith('data:')) return { ...p, img: '' };
+      return p;
+    });
+  }
+  try {
+    localStorage.setItem(k, JSON.stringify(localVal));
+  } catch (e) {
+    if (e.name === 'QuotaExceededError') {
+      // localStorage full — clear old keys that are safe to regenerate from Supabase
+      console.warn('localStorage quota hit — clearing cached data, Supabase is source of truth');
+      [POSTS_KEY, DRAFTS_KEY, VIEWS_KEY, REACTIONS_KEY, COMMENTS_KEY].forEach(key => {
+        try { localStorage.removeItem(key); } catch(_) {}
+      });
+      try { localStorage.setItem(k, JSON.stringify(localVal)); } catch(_) {}
+    }
+  }
+  // Skip Supabase sync while hydrating (reading FROM Supabase)
   if (!supabaseClient || _hydrating) return;
-  if (k === POSTS_KEY) void syncPostsToSupabase(v);
-  else if (k === DRAFTS_KEY) void syncDraftsToSupabase(v);
-  else if (k === COMMENTS_KEY) void syncCommentsToSupabase(v);
+  if (k === POSTS_KEY)     void syncPostsToSupabase(v);
+  else if (k === DRAFTS_KEY)    void syncDraftsToSupabase(v);
+  else if (k === COMMENTS_KEY)  void syncCommentsToSupabase(v);
   else if (k === REACTIONS_KEY) void syncReactionsToSupabase(v);
-  else if (k === VIEWS_KEY) void syncViewsToSupabase(v);
-  else if (k === SUBS_KEY) void syncSubscribersToSupabase(v);
+  else if (k === VIEWS_KEY)     void syncViewsToSupabase(v);
+  else if (k === SUBS_KEY)      void syncSubscribersToSupabase(v);
 };
 
 const getPosts     = () => load(POSTS_KEY)     || [];
@@ -54,13 +76,9 @@ function mapSupabasePost(row) {
   };
 }
 
-// FIX 5: prevent save() from triggering sync back to Supabase while we're reading from it
-let _hydrating = false;
-
 async function hydrateFromSupabase() {
   if (!supabaseClient) return;
   try {
-    _hydrating = true;
     const { data: postRows, error: postError } = await supabaseClient.from('posts').select('*').order('created_at', { ascending: false });
     if (!postError && postRows) {
       const posts = postRows.filter(r => !r.draft).map(mapSupabasePost);
@@ -101,9 +119,6 @@ async function hydrateFromSupabase() {
     }
   } catch (err) {
     console.warn('Supabase sync warning:', err);
-  } finally {
-    _hydrating = false;
-    renderHome(); // re-render once fresh data is loaded
   }
 }
 
@@ -498,14 +513,22 @@ function react(postId, type) {
 
 
 /* ═══════════════════════════════════════════════════
-   IMAGE UPLOAD
+   IMAGE UPLOAD — uploads to Supabase Storage
+   Returns a public URL (tiny string) instead of
+   storing a giant base64 blob in localStorage.
 ═══════════════════════════════════════════════════ */
+
+// Stores the actual File object so we can upload on publish/save
+let _pendingCoverFile    = null;
+let _pendingProductFile  = null;
+
 function previewImage(input) {
   const file = input.files[0]; if (!file) return;
+  _pendingCoverFile = file;
   const r = new FileReader();
   r.onload = e => {
     const el = document.getElementById('img-preview-el');
-    el.src = e.target.result;
+    el.src = e.target.result;   // local preview only — not stored
     el.classList.remove('hidden');
   };
   r.readAsDataURL(file);
@@ -513,6 +536,7 @@ function previewImage(input) {
 
 function previewProductImage(input) {
   const file = input.files[0]; if (!file) return;
+  _pendingProductFile = file;
   const r = new FileReader();
   r.onload = e => {
     const el = document.getElementById('p-img-preview');
@@ -522,18 +546,41 @@ function previewProductImage(input) {
   r.readAsDataURL(file);
 }
 
+async function uploadImageToSupabase(file, bucket) {
+  if (!file || !supabaseClient) return null;
+  try {
+    const ext  = file.name.split('.').pop() || 'jpg';
+    const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error } = await supabaseClient.storage.from(bucket).upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type
+    });
+    if (error) { console.error('Image upload error:', error.message); return null; }
+    const { data } = supabaseClient.storage.from(bucket).getPublicUrl(path);
+    return data?.publicUrl || null;
+  } catch (err) {
+    console.error('Image upload failed:', err);
+    return null;
+  }
+}
+
 
 /* ═══════════════════════════════════════════════════
    WRITE / PUBLISH / DRAFT / EDIT / DELETE
 ═══════════════════════════════════════════════════ */
 function getWriteFormData() {
   const imgEl = document.getElementById('img-preview-el');
+  // Use existing URL if editing a published post (imgEl.src is already an https:// URL)
+  // If src is a local blob/base64 preview, we'll upload it on publish — return empty for now
+  const existingUrl = imgEl.src && !imgEl.classList.contains('hidden') && imgEl.src.startsWith('http')
+    ? imgEl.src : '';
   return {
     title : document.getElementById('w-title').value.trim(),
     body  : document.getElementById('w-body').value.trim(),
     cat   : document.getElementById('w-cat').value,
     seo   : document.getElementById('w-seo').value.trim(),
-    img   : imgEl.src && !imgEl.classList.contains('hidden') ? imgEl.src : ''
+    img   : existingUrl   // base64 never stored here — upload happens in publishPost()
   };
 }
 
@@ -543,19 +590,28 @@ function clearWriteForm() {
   document.getElementById('w-edit-id').value     = '';
   const prev = document.getElementById('img-preview-el');
   prev.classList.add('hidden'); prev.src = '';
+  _pendingCoverFile = null;  // clear any pending upload
   document.getElementById('write-heading').textContent  = 'Write a new post';
   document.getElementById('write-subtitle').textContent = 'Draft autosaves every 30 seconds';
 }
 
-function publishPost() {
+async function publishPost() {
   const d = getWriteFormData();
   if (!d.title || !d.body) { showToast('Title and content are required'); return; }
+
+  // Upload cover image to Supabase Storage if a new file was selected
+  if (_pendingCoverFile) {
+    showToast('Uploading image…');
+    const url = await uploadImageToSupabase(_pendingCoverFile, 'covers');
+    if (url) d.img = url;
+    _pendingCoverFile = null;
+  }
+
   const editId = document.getElementById('w-edit-id').value;
   let posts = getPosts();
   if (editId) {
     posts = posts.map(p => p.id === editId ? { ...p, ...d, date: p.date, draft: false } : p);
     save(POSTS_KEY, posts);
-    // Remove from drafts if it was a draft
     save(DRAFTS_KEY, getDrafts().filter(dr => dr.id !== editId));
     showToast('Post updated!');
   } else {
@@ -567,16 +623,24 @@ function publishPost() {
   showPage('home');
 }
 
-function saveDraft() {
+async function saveDraft() {
   const d = getWriteFormData();
   if (!d.title && !d.body) { showToast('Write something first'); return; }
+
+  // Upload cover image if a new file is pending
+  if (_pendingCoverFile) {
+    const url = await uploadImageToSupabase(_pendingCoverFile, 'covers');
+    if (url) d.img = url;
+    _pendingCoverFile = null;
+  }
+
   const existId = document.getElementById('w-edit-id').value;
   const drafts  = getDrafts();
   const idx     = drafts.findIndex(dr => dr.id === existId);
   const draft   = { id: existId || makeId(), ...d, savedAt: new Date().toISOString() };
   if (idx >= 0) drafts[idx] = draft; else drafts.push(draft);
   save(DRAFTS_KEY, drafts);
-  document.getElementById('w-edit-id').value       = draft.id;
+  document.getElementById('w-edit-id').value          = draft.id;
   document.getElementById('autosave-txt').textContent = 'Saved ' + new Date().toLocaleTimeString();
   showToast('Draft saved!');
 }
@@ -717,13 +781,23 @@ function openProductModal(editId) {
   document.getElementById('modal-product').classList.remove('hidden');
 }
 
-function saveProduct() {
+async function saveProduct() {
   const name = document.getElementById('p-name').value.trim();
   const url  = document.getElementById('p-url').value.trim();
   if (!name || !url) { showToast('Name and URL are required'); return; }
+
+  // Upload product image if a new file is pending
+  let img = '';
   const imgEl = document.getElementById('p-img-preview');
-  const img   = imgEl.src && !imgEl.classList.contains('hidden') ? imgEl.src : '';
-  const prod  = { name, desc: document.getElementById('p-desc').value.trim(),
+  if (imgEl.src && !imgEl.classList.contains('hidden') && imgEl.src.startsWith('http')) {
+    img = imgEl.src; // already uploaded URL
+  } else if (_pendingProductFile) {
+    const uploaded = await uploadImageToSupabase(_pendingProductFile, 'covers');
+    if (uploaded) img = uploaded;
+    _pendingProductFile = null;
+  }
+
+  const prod   = { name, desc: document.getElementById('p-desc').value.trim(),
     price: document.getElementById('p-price').value.trim(), url, img };
   const editId = document.getElementById('p-edit-id').value;
   let products = getProducts();
@@ -837,7 +911,7 @@ function downloadRSS() {
    PAGE NAV
 ═══════════════════════════════════════════════════ */
 function showPage(name) {
-  if (name === 'write' && !isAdmin()) { _pendingWrite = true; showAdminPrompt(); return; }
+  if (name === 'write' && !isAdmin()) { showAdminPrompt(); return; }
   clearInterval(autoSaveTimer);
   closeMenu();
   ['home','post','write','products'].forEach(p => {
@@ -883,60 +957,69 @@ function showToast(msg) {
 /* ═══════════════════════════════════════════════════
    ADMIN AUTH
 ═══════════════════════════════════════════════════ */
-// ── HOW TO SET YOUR PASSWORD ───────────────────────────────────────────────
-// 1. Open the interactive guide widget in Claude chat
-// 2. Type your password in Step 1 — it generates the hash live
-// 3. Copy the hash and replace the value below
-// 4. Save script.js and push to GitHub
-// Default below = sha256('password') — CHANGE THIS before going live
-// ──────────────────────────────────────────────────────────────────────────
+// Hash of your admin password.
+// Generate your own at: https://emn178.github.io/online-tools/sha256.html
+// The default value below matches sha256('password').
 const ADMIN_HASH = '6d0e4ce5152510bf299db98468ce1e8971a493c13a11fa0a7bf6b713aca35fba';
+const LEGACY_ADMIN_HASH = 'Fwwk7Qdf0xNk0x/8eagq4UG5++RY8TacnrA8it1YLUg=';
 
 async function sha256(msg) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
 }
 
+async function sha256Base64(msg) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
+  let binary = '';
+  new Uint8Array(buf).forEach(b => binary += String.fromCharCode(b));
+  return btoa(binary);
+}
+
 async function showAdminPrompt() {
   const pin = prompt('Admin password:');
   if (pin === null || pin === '') return;
   const hash = await sha256(pin.trim());
-  if (hash === ADMIN_HASH) {
+  const hashB64 = await sha256Base64(pin.trim());
+  if (hash === ADMIN_HASH.toLowerCase() || hashB64 === LEGACY_ADMIN_HASH) {
     sessionStorage.setItem('dcd_admin', '1');
     renderHome();
     showToast('Admin mode on ✓');
-    // FIX 4: go to write page if that's what triggered the prompt
+    // If we were trying to go to write page, go there now
     if (_pendingWrite) { _pendingWrite = false; showPage('write'); }
   } else {
-    showToast('Wrong password — try again');
+    showToast('Wrong password');
   }
 }
 
-// FIX 4: flag so showPage('write') triggers login then redirects correctly
 let _pendingWrite = false;
 
-// ── 3 ways to open admin prompt ────────────────────────────────────────────
+// ── Keyboard shortcut (3 methods so one always works) ──────────────────────
 
-// Method 1: Ctrl+Shift+A (keyboard, desktop)
+// Method 1: Ctrl + Shift + A  (most reliable, works everywhere)
 document.addEventListener('keydown', e => {
-  if (e.ctrlKey && e.shiftKey && e.key === 'A') { e.preventDefault(); showAdminPrompt(); }
+  if (e.ctrlKey && e.shiftKey && e.key === 'A') {
+    e.preventDefault();
+    showAdminPrompt();
+  }
 });
 
-// Method 2: Tap logo 5 times quickly (mobile-friendly)
-// FIX 3: use data attribute counter instead of addEventListener to avoid conflict with goHome()
-let _logoTaps = 0, _logoTapTimer;
-function _onLogoTap() {
-  _logoTaps++;
-  clearTimeout(_logoTapTimer);
-  if (_logoTaps >= 5) { _logoTaps = 0; showAdminPrompt(); return; }
-  _logoTapTimer = setTimeout(() => { _logoTaps = 0; }, 800);
+// Method 2: Triple-click the logo (works on mobile too)
+let _logoClicks = 0, _logoTimer;
+const logoEl = document.querySelector('.logo');
+if (logoEl) {
+  logoEl.addEventListener('click', e => {
+    e.stopPropagation();
+    _logoClicks++;
+    clearTimeout(_logoTimer);
+    if (_logoClicks >= 5) { _logoClicks = 0; showAdminPrompt(); return; }
+    _logoTimer = setTimeout(() => { _logoClicks = 0; }, 800);
+  });
 }
-window._onLogoTap = _onLogoTap;
 
-// Method 3: Type "dotcom" anywhere on keyboard
+// Method 3: Type the sequence "dotcom" anywhere (no special chars, mobile-friendly)
 let _ks = '';
 document.addEventListener('keydown', e => {
-  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   _ks += e.key.toLowerCase();
   if (_ks.length > 6) _ks = _ks.slice(-6);
   if (_ks === 'dotcom') { _ks = ''; showAdminPrompt(); }
