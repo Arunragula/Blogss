@@ -271,7 +271,7 @@ function renderCard(post) {
   const v        = getViews()[post.id] || post.views || 0;
   const comments = (getComments()[post.id] || []).length;
   const imgHtml  = post.img && post.img.startsWith('http')
-    ? `<div class="post-card-img"><img src="${post.img}" alt="${esc(post.title)}" loading="lazy" onerror="this.parentElement.innerHTML='<i class=\"ti ti-article\" style=\"font-size:36px;color:#ccc\"></i>'"/></div>`
+    ? `<div class="post-card-img" style="width:100%;height:200px;overflow:hidden;background:#f0f0f0"><img src="${post.img}" alt="${esc(post.title)}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.innerHTML='<i class=\"ti ti-article\" style=\"font-size:36px;color:#ccc;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)\"></i>'"/></div>`
     : `<div class="post-card-img"><i class="ti ti-article" style="font-size:36px;color:#ccc"></i></div>`;
   const adminActions = isAdmin()
     ? `<div class="admin-card-actions">
@@ -404,7 +404,7 @@ function openPost(id) {
         </div>
       </div>
     </div>
-    ${post.img && post.img.startsWith('http') ? `<img src="${post.img}" alt="${esc(post.title)}" class="post-hero-img" onerror="this.style.display='none'"/>` : ''}
+    ${post.img && post.img.startsWith('http') ? `<img src="${post.img}" alt="${esc(post.title)}" class="post-hero-img" style="width:100%;max-height:400px;object-fit:cover;display:block;margin:20px 0" onerror="this.style.display='none'"/>` : ''}
     <div class="post-body">${parseBody(post.body)}</div>
 
     <div class="reaction-bar">
