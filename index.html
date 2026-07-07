@@ -24,6 +24,7 @@
 
   <!-- Styles -->
   <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -34,10 +35,9 @@
   <div class="nav-inner">
 
     <!-- Logo -->
-    <div class="logo" onclick="showPage('home')" role="link" tabindex="0"
-         onkeydown="if(event.key==='Enter')showPage('home')">
+    <button class="logo" type="button" onclick="goHome();window._onLogoTap&&_onLogoTap()" aria-label="Go to home page">
       <span>.</span>com<span>daily</span>
-    </div>
+    </button>
 
     <!-- Desktop nav links -->
     <div class="nav-links" id="desktop-nav">
@@ -64,7 +64,7 @@
     </div>
 
     <!-- Mobile hamburger -->
-    <button class="hamburger" id="hamburger" onclick="toggleMenu()"
+    <button class="hamburger" id="hamburger" onclick="window.toggleMenu?.()"
             aria-label="Toggle menu" aria-expanded="false" aria-controls="mobile-drawer">
       <span></span><span></span><span></span>
     </button>

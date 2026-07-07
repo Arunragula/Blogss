@@ -11,8 +11,25 @@ const VIEWS_KEY     = 'dcd_views';
 const SUBS_KEY      = 'dcd_subs';
 const PRODUCTS_KEY  = 'dcd_products';
 
+const SUPABASE_URL = 'https://wavslilzgpmanfhavtle.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndhdnNsaWx6Z3BtYW5maGF2dGxlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzNDYxODAsImV4cCI6MjA5ODkyMjE4MH0.0fiWek2pqc-EbsvzEKV5ZjfDgK10lagKvk0FHUYLOfw';
+const supabaseClient = (typeof window !== 'undefined' && window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY &&
+  !SUPABASE_URL.includes('your-project-ref') && !SUPABASE_ANON_KEY.includes('your-anon-key'))
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
 const load = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
-const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const save = (k, v) => {
+  localStorage.setItem(k, JSON.stringify(v));
+  // FIX 5: skip Supabase sync while hydrating (reading FROM Supabase)
+  if (!supabaseClient || _hydrating) return;
+  if (k === POSTS_KEY) void syncPostsToSupabase(v);
+  else if (k === DRAFTS_KEY) void syncDraftsToSupabase(v);
+  else if (k === COMMENTS_KEY) void syncCommentsToSupabase(v);
+  else if (k === REACTIONS_KEY) void syncReactionsToSupabase(v);
+  else if (k === VIEWS_KEY) void syncViewsToSupabase(v);
+  else if (k === SUBS_KEY) void syncSubscribersToSupabase(v);
+};
 
 const getPosts     = () => load(POSTS_KEY)     || [];
 const getDrafts    = () => load(DRAFTS_KEY)    || [];
@@ -20,6 +37,130 @@ const getReactions = () => load(REACTIONS_KEY) || {};
 const getComments  = () => load(COMMENTS_KEY)  || {};
 const getViews     = () => load(VIEWS_KEY)     || {};
 const getProducts  = () => load(PRODUCTS_KEY)  || [];
+
+const makeId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now() + Math.random().toString(16).slice(2));
+
+function mapSupabasePost(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    cat: row.cat || 'Thoughts',
+    seo: row.seo_description || '',
+    img: row.img_url || '',
+    date: row.created_at,
+    draft: !!row.draft,
+    views: 0
+  };
+}
+
+// FIX 5: prevent save() from triggering sync back to Supabase while we're reading from it
+let _hydrating = false;
+
+async function hydrateFromSupabase() {
+  if (!supabaseClient) return;
+  try {
+    _hydrating = true;
+    const { data: postRows, error: postError } = await supabaseClient.from('posts').select('*').order('created_at', { ascending: false });
+    if (!postError && postRows) {
+      const posts = postRows.filter(r => !r.draft).map(mapSupabasePost);
+      const drafts = postRows.filter(r => !!r.draft).map(mapSupabasePost);
+      save(POSTS_KEY, posts);
+      save(DRAFTS_KEY, drafts);
+    }
+
+    const { data: viewRows, error: viewError } = await supabaseClient.from('views').select('*');
+    if (!viewError && viewRows) {
+      const views = Object.fromEntries(viewRows.map(r => [r.post_id, r.count || 0]));
+      save(VIEWS_KEY, views);
+    }
+
+    const { data: reactionRows, error: reactionError } = await supabaseClient.from('reactions').select('*');
+    if (!reactionError && reactionRows) {
+      const reactions = {};
+      reactionRows.forEach(r => {
+        reactions['likes_' + r.post_id] = r.likes || 0;
+        reactions['dislikes_' + r.post_id] = r.dislikes || 0;
+      });
+      save(REACTIONS_KEY, reactions);
+    }
+
+    const { data: commentRows, error: commentError } = await supabaseClient.from('comments').select('*').order('created_at', { ascending: true });
+    if (!commentError && commentRows) {
+      const comments = {};
+      commentRows.forEach(r => {
+        if (!comments[r.post_id]) comments[r.post_id] = [];
+        comments[r.post_id].push({ name: r.name || 'Anonymous', text: r.body, date: r.created_at });
+      });
+      save(COMMENTS_KEY, comments);
+    }
+
+    const { data: subRows, error: subError } = await supabaseClient.from('subscribers').select('email');
+    if (!subError && subRows) {
+      save(SUBS_KEY, subRows.map(r => r.email));
+    }
+  } catch (err) {
+    console.warn('Supabase sync warning:', err);
+  } finally {
+    _hydrating = false;
+    renderHome(); // re-render once fresh data is loaded
+  }
+}
+
+async function syncPostsToSupabase(posts) {
+  if (!supabaseClient || !Array.isArray(posts)) return;
+  const rows = posts.map(p => ({ id: p.id, title: p.title, body: p.body, cat: p.cat || 'Thoughts', seo_description: p.seo || '', img_url: p.img || '', draft: !!p.draft, created_at: p.date || new Date().toISOString() }));
+  await supabaseClient.from('posts').upsert(rows, { onConflict: 'id' });
+}
+
+async function syncDraftsToSupabase(drafts) {
+  if (!supabaseClient || !Array.isArray(drafts)) return;
+  const rows = drafts.map(d => ({ id: d.id, title: d.title || '', body: d.body || '', cat: d.cat || 'Thoughts', seo_description: d.seo || '', img_url: d.img || '', draft: true, created_at: d.savedAt || d.date || new Date().toISOString() }));
+  await supabaseClient.from('posts').upsert(rows, { onConflict: 'id' });
+}
+
+async function syncCommentsToSupabase(comments) {
+  if (!supabaseClient) return;
+  const entries = Object.entries(comments || {});
+  const rows = entries.flatMap(([postId, list]) => (list || []).map(c => ({
+    id: c.id || makeId(),
+    post_id: postId,
+    name: c.name || 'Anonymous',
+    body: c.text || c.body || '',
+    created_at: c.date || new Date().toISOString()
+  })));
+  if (!rows.length) return;
+  await supabaseClient.from('comments').upsert(rows, { onConflict: 'id' });
+}
+
+async function syncReactionsToSupabase(reactions) {
+  if (!supabaseClient) return;
+  const perPost = {};
+  Object.entries(reactions || {}).forEach(([k, v]) => {
+    if (!k.startsWith('likes_') && !k.startsWith('dislikes_')) return;
+    const postId = k.replace(/^likes_/, '').replace(/^dislikes_/, '');
+    if (!perPost[postId]) perPost[postId] = { post_id: postId, likes: 0, dislikes: 0 };
+    if (k.startsWith('likes_')) perPost[postId].likes = v || 0;
+    else perPost[postId].dislikes = v || 0;
+  });
+  const rows = Object.values(perPost);
+  if (!rows.length) return;
+  await supabaseClient.from('reactions').upsert(rows, { onConflict: 'post_id' });
+}
+
+async function syncViewsToSupabase(views) {
+  if (!supabaseClient) return;
+  const rows = Object.entries(views || {}).map(([postId, count]) => ({ post_id: postId, count: count || 0 }));
+  if (!rows.length) return;
+  await supabaseClient.from('views').upsert(rows, { onConflict: 'post_id' });
+}
+
+async function syncSubscribersToSupabase(subs) {
+  if (!supabaseClient || !Array.isArray(subs)) return;
+  const rows = subs.map(email => ({ email }));
+  if (!rows.length) return;
+  await supabaseClient.from('subscribers').upsert(rows, { onConflict: 'email' });
+}
 
 /* ── Utilities ── */
 const readTime   = body => Math.max(1, Math.ceil(body.split(/\s+/).length / 200));
@@ -52,6 +193,9 @@ function closeMenu() {
   document.getElementById('hamburger').classList.remove('open');
   document.getElementById('mobile-drawer').classList.remove('open');
 }
+
+window.toggleMenu = toggleMenu;
+window.closeMenu = closeMenu;
 
 // Close drawer when tapping outside
 document.addEventListener('click', e => {
@@ -415,7 +559,7 @@ function publishPost() {
     save(DRAFTS_KEY, getDrafts().filter(dr => dr.id !== editId));
     showToast('Post updated!');
   } else {
-    posts.push({ id:'p'+Date.now(), ...d, date: new Date().toISOString(), views: 0, draft: false });
+    posts.push({ id: makeId(), ...d, date: new Date().toISOString(), views: 0, draft: false });
     save(POSTS_KEY, posts);
     showToast('Post published!');
   }
@@ -429,7 +573,7 @@ function saveDraft() {
   const existId = document.getElementById('w-edit-id').value;
   const drafts  = getDrafts();
   const idx     = drafts.findIndex(dr => dr.id === existId);
-  const draft   = { id: existId || 'dr'+Date.now(), ...d, savedAt: new Date().toISOString() };
+  const draft   = { id: existId || makeId(), ...d, savedAt: new Date().toISOString() };
   if (idx >= 0) drafts[idx] = draft; else drafts.push(draft);
   save(DRAFTS_KEY, drafts);
   document.getElementById('w-edit-id').value       = draft.id;
@@ -470,7 +614,7 @@ function publishDraft(id) {
   if (!draft) return;
   if (!draft.title || !draft.body) { editDraft(id); showToast('Please complete the post before publishing'); return; }
   const posts = getPosts();
-  posts.push({ id:'p'+Date.now(), title:draft.title, body:draft.body, cat:draft.cat||'Thoughts',
+  posts.push({ id: makeId(), title:draft.title, body:draft.body, cat:draft.cat||'Thoughts',
     seo:draft.seo||'', img:draft.img||'', date:new Date().toISOString(), views:0, draft:false });
   save(POSTS_KEY, posts);
   save(DRAFTS_KEY, drafts.filter(d => d.id !== id));
@@ -693,7 +837,7 @@ function downloadRSS() {
    PAGE NAV
 ═══════════════════════════════════════════════════ */
 function showPage(name) {
-  if (name === 'write' && !isAdmin()) { showAdminPrompt(); return; }
+  if (name === 'write' && !isAdmin()) { _pendingWrite = true; showAdminPrompt(); return; }
   clearInterval(autoSaveTimer);
   closeMenu();
   ['home','post','write','products'].forEach(p => {
@@ -705,10 +849,20 @@ function showPage(name) {
   window.scrollTo(0, 0);
 }
 
+function goHome() {
+  showPage('home');
+  setActive('nav-home');
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+}
+
 function setActive(id) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   const el = document.getElementById(id); if (el) el.classList.add('active');
 }
+
+window.goHome = goHome;
+window.showPage = showPage;
+window.setActive = setActive;
 
 
 /* ═══════════════════════════════════════════════════
@@ -729,65 +883,60 @@ function showToast(msg) {
 /* ═══════════════════════════════════════════════════
    ADMIN AUTH
 ═══════════════════════════════════════════════════ */
-// Hash of your admin password.
-// Generate your own at: https://emn178.github.io/online-tools/sha256.html
-// The default value below matches sha256('password').
-const ADMIN_HASH = '213ac44041b929770779f325d178140a8b01450546925881279d5e27f02c9d9e';
-
+// ── HOW TO SET YOUR PASSWORD ───────────────────────────────────────────────
+// 1. Open the interactive guide widget in Claude chat
+// 2. Type your password in Step 1 — it generates the hash live
+// 3. Copy the hash and replace the value below
+// 4. Save script.js and push to GitHub
+// Default below = sha256('password') — CHANGE THIS before going live
+// ──────────────────────────────────────────────────────────────────────────
+const ADMIN_HASH = '6d0e4ce5152510bf299db98468ce1e8971a493c13a11fa0a7bf6b713aca35fba';
 
 async function sha256(msg) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
 }
 
-async function sha256Base64(msg) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
-  let binary = '';
-  new Uint8Array(buf).forEach(b => binary += String.fromCharCode(b));
-  return btoa(binary);
-}
-
 async function showAdminPrompt() {
   const pin = prompt('Admin password:');
   if (pin === null || pin === '') return;
   const hash = await sha256(pin.trim());
-  const hashB64 = await sha256Base64(pin.trim());
-  if (hash === ADMIN_HASH.toLowerCase() || hashB64 === LEGACY_ADMIN_HASH) {
+  if (hash === ADMIN_HASH) {
     sessionStorage.setItem('dcd_admin', '1');
     renderHome();
     showToast('Admin mode on ✓');
-    // If we were trying to go to write page, go there now
+    // FIX 4: go to write page if that's what triggered the prompt
     if (_pendingWrite) { _pendingWrite = false; showPage('write'); }
   } else {
-    showToast('Wrong password');
+    showToast('Wrong password — try again');
   }
 }
 
+// FIX 4: flag so showPage('write') triggers login then redirects correctly
 let _pendingWrite = false;
 
-// ── Keyboard shortcut (3 methods so one always works) ──────────────────────
+// ── 3 ways to open admin prompt ────────────────────────────────────────────
 
-// Method 1: Ctrl + Shift + A  (most reliable, works everywhere)
+// Method 1: Ctrl+Shift+A (keyboard, desktop)
 document.addEventListener('keydown', e => {
-  if (e.ctrlKey && e.shiftKey && e.key === 'A') {
-    e.preventDefault();
-    showAdminPrompt();
-  }
+  if (e.ctrlKey && e.shiftKey && e.key === 'A') { e.preventDefault(); showAdminPrompt(); }
 });
 
-// Method 2: Triple-click the logo (works on mobile too)
-let _logoClicks = 0, _logoTimer;
-document.querySelector('.logo').addEventListener('click', () => {
-  _logoClicks++;
-  clearTimeout(_logoTimer);
-  if (_logoClicks >= 5) { _logoClicks = 0; showAdminPrompt(); return; }
-  _logoTimer = setTimeout(() => { _logoClicks = 0; }, 800);
-});
+// Method 2: Tap logo 5 times quickly (mobile-friendly)
+// FIX 3: use data attribute counter instead of addEventListener to avoid conflict with goHome()
+let _logoTaps = 0, _logoTapTimer;
+function _onLogoTap() {
+  _logoTaps++;
+  clearTimeout(_logoTapTimer);
+  if (_logoTaps >= 5) { _logoTaps = 0; showAdminPrompt(); return; }
+  _logoTapTimer = setTimeout(() => { _logoTaps = 0; }, 800);
+}
+window._onLogoTap = _onLogoTap;
 
-// Method 3: Type the sequence "dotcom" anywhere (no special chars, mobile-friendly)
+// Method 3: Type "dotcom" anywhere on keyboard
 let _ks = '';
 document.addEventListener('keydown', e => {
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
   _ks += e.key.toLowerCase();
   if (_ks.length > 6) _ks = _ks.slice(-6);
   if (_ks === 'dotcom') { _ks = ''; showAdminPrompt(); }
@@ -798,3 +947,4 @@ document.addEventListener('keydown', e => {
    BOOT
 ═══════════════════════════════════════════════════ */
 renderHome();
+void hydrateFromSupabase();
