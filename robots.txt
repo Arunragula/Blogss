@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://dotcomdaily.vercel.app/sitemap.xml
