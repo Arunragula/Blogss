@@ -5,49 +5,46 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#fafaf7">
-  <meta id="meta-desc"  name="description"        content="DotComDaily — Thoughts that actually mean something.">
+  <meta id="meta-desc"  name="description"        content="DotComDaily — Latest, trending, and most viewed blogs.">
   <meta id="og-title"   property="og:title"        content="DotComDaily">
-  <meta id="og-desc"    property="og:description"  content="Thoughts that actually mean something.">
+  <meta id="og-desc"    property="og:description"  content="Latest, trending, and most viewed blogs.">
   <meta id="og-image"   property="og:image"        content="">
   <meta id="og-url"     property="og:url"          content="">
   <meta property="og:type"        content="article">
   <meta name="twitter:card"       content="summary_large_image">
   <meta name="twitter:site"       content="@dotcomdaily">
-  <title id="page-title">DotComDaily — Thoughts That Hit Different</title>
+  <link rel="canonical" href="https://dotcomdaily.vercel.app/">
+  <title id="page-title">DotComDaily — Latest, Trending & Most Viewed Blogs</title>
 
-  <!-- Fonts -->
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
-  <!-- Icons -->
+ 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
 
-  <!-- Styles -->
+ 
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════
-     NAV
-═══════════════════════════════════════ -->
 <nav role="navigation" aria-label="Main navigation">
   <div class="nav-inner">
 
-    <!-- Logo -->
+   
     <button class="logo" type="button" onclick="goHome();window._onLogoTap&&_onLogoTap()" aria-label="Go to home page">
       <span>.</span>com<span>daily</span>
     </button>
-
-    <!-- Desktop nav links -->
+>
     <div class="nav-links" id="desktop-nav">
       <button class="nav-btn active" id="nav-home"
               onclick="showPage('home');setActive('nav-home')">Feed</button>
       <button class="nav-btn" id="nav-products"
               onclick="showPage('products');setActive('nav-products')">Products</button>
 
-      <!-- Desktop search -->
+     
       <div class="search-wrap">
         <i class="ti ti-search search-icon" aria-hidden="true"></i>
         <input class="search-input" type="search" id="search-input"
@@ -56,15 +53,17 @@
                onblur="setTimeout(()=>closeSearch(),200)" />
         <div class="search-results hidden" id="search-results" role="listbox"></div>
       </div>
-
-      <!-- RSS -->
+>
       <a class="rss-link" href="#" onclick="downloadRSS();return false;" title="Download RSS feed"
          aria-label="RSS feed">
         <i class="ti ti-rss" aria-hidden="true"></i> RSS
       </a>
+
+      <button class="nav-btn admin-only-ui hidden" onclick="adminLogout()" title="Sign out of admin">
+        <i class="ti ti-logout" style="margin-right:4px"></i>Sign out
+      </button>
     </div>
 
-    <!-- Mobile hamburger -->
     <button class="hamburger" id="hamburger" onclick="window.toggleMenu?.()"
             aria-label="Toggle menu" aria-expanded="false" aria-controls="mobile-drawer">
       <span></span><span></span><span></span>
@@ -73,7 +72,6 @@
   </div>
 </nav>
 
-<!-- Mobile drawer -->
 <div class="mobile-drawer" id="mobile-drawer" role="dialog" aria-label="Navigation menu">
   <button class="nav-btn" onclick="showPage('home');setActive('nav-home');closeMenu()">
     <i class="ti ti-home" style="margin-right:6px"></i>Feed
@@ -82,7 +80,6 @@
     <i class="ti ti-package" style="margin-right:6px"></i>Products
   </button>
 
-  <!-- Mobile search -->
   <div class="mobile-search search-wrap" style="margin-top:8px">
     <i class="ti ti-search search-icon" aria-hidden="true"></i>
     <input class="search-input" type="search" id="mobile-search-input"
@@ -95,31 +92,77 @@
   <a class="rss-link" href="#" onclick="downloadRSS();return false;" style="margin-top:4px">
     <i class="ti ti-rss" aria-hidden="true"></i> RSS feed
   </a>
+
+  <button class="nav-btn admin-only-ui hidden" onclick="adminLogout()" style="margin-top:4px">
+    <i class="ti ti-logout" style="margin-right:6px"></i>Sign out
+  </button>
 </div>
 
 
-<!-- ═══════════════════════════════════════
-     HOME PAGE
-═══════════════════════════════════════ -->
+
 <div id="page-home" class="page">
 
-  <div class="hero">
-    <h1>Thoughts that<br><em>actually mean something</em></h1>
-    <p>A daily dot of ideas, observations, and honest takes on everything — from tech to life.</p>
-    <div class="newsletter-bar">
-      <input type="email" id="email-sub" placeholder="your@email.com"
-             aria-label="Email address for newsletter" />
-      <button class="btn-primary" onclick="subscribe()">Subscribe</button>
+  <div class="hero editorial-hero">
+    <div class="hero-copy">
+      <p class="hero-eyebrow">Independent blog magazine</p>
+      <h1>Clear stories for readers who want the <em>best angle first</em></h1>
+      <p>Latest stories, most viewed reads, and the posts gaining momentum, all presented in a cleaner editorial layout.</p>
+      <div class="hero-actions">
+        <button class="btn-primary" onclick="document.getElementById('all-blogs').scrollIntoView({behavior:'smooth'})">View all blogs</button>
+        <button class="btn-secondary" onclick="document.getElementById('latest-story').scrollIntoView({behavior:'smooth'})">Read latest</button>
+      </div>
+      <div class="hero-stats" id="hero-stats">
+        <div class="hero-stat">
+          <strong id="hero-post-count">0</strong>
+          <span>Published posts</span>
+        </div>
+        <div class="hero-stat">
+          <strong id="hero-view-count">0</strong>
+          <span>Total views</span>
+        </div>
+        <div class="hero-stat">
+          <strong id="hero-trend-count">0</strong>
+          <span>Trending now</span>
+        </div>
+      </div>
     </div>
-    <p style="font-size:12px;color:var(--ink3);margin-top:10px">
-      No spam. Just a dot in your inbox when something new drops.
-    </p>
+    <div class="hero-featured-wrap" id="latest-story"></div>
   </div>
 
-  <div class="section-label">Latest posts</div>
-  <div class="posts-grid" id="posts-grid" role="list"></div>
+  <section class="home-section" id="most-viewed">
+    <div class="section-head">
+      <div>
+        <p class="section-kicker">Audience favorite</p>
+        <h2>Most Viewed Blogs</h2>
+      </div>
+      
+    </div>
+    <div class="posts-grid posts-grid--compact" id="most-viewed-grid" role="list"></div>
+  </section>
 
-  <!-- Drafts — admin only -->
+  <section class="home-section" id="trending-now">
+    <div class="section-head">
+      <div>
+        <p class="section-kicker">What's moving</p>
+        <h2>Trending Blogs</h2>
+      </div>
+      
+    </div>
+    <div class="posts-grid posts-grid--compact" id="trending-grid" role="list"></div>
+  </section>
+
+  <section class="home-section" id="all-blogs">
+    <div class="section-head">
+      <div>
+        <p class="section-kicker">Browse everything</p>
+        <h2>View All Blogs</h2>
+      </div>
+      
+    </div>
+    <div class="posts-grid" id="all-posts-grid" role="list"></div>
+  </section>
+
+  ->
   <div class="drafts-section hidden" id="drafts-section">
     <div class="drafts-section-header">
       <div style="display:flex;align-items:center;gap:10px">
@@ -138,9 +181,7 @@
 </div>
 
 
-<!-- ═══════════════════════════════════════
-     SINGLE POST PAGE
-═══════════════════════════════════════ -->
+->
 <div id="page-post" class="page hidden">
   <div class="post-layout">
     <div class="post-main" id="post-content"></div>
@@ -148,9 +189,7 @@
 </div>
 
 
-<!-- ═══════════════════════════════════════
-     WRITE PAGE (admin only)
-═══════════════════════════════════════ -->
+
 <div id="page-write" class="write-page hidden">
   <h2 id="write-heading">Write a new post</h2>
   <p class="write-subtitle" id="write-subtitle">Draft autosaves every 30 seconds</p>
@@ -175,13 +214,20 @@
 
   <div class="form-group">
     <label>Cover image</label>
-    <div class="img-upload" onclick="document.getElementById('img-file').click()"
+    <div class="img-upload" id="img-upload-box" onclick="document.getElementById('img-file').click()"
          role="button" tabindex="0" aria-label="Upload cover image"
          onkeydown="if(event.key==='Enter')document.getElementById('img-file').click()">
-      <i class="ti ti-photo-up" style="font-size:28px;color:var(--ink3);display:block;margin-bottom:8px"></i>
-      <div style="font-size:14px;color:var(--ink2)">Tap to upload a cover photo</div>
-      <div style="font-size:12px;color:var(--ink3);margin-top:4px">JPG, PNG, GIF up to 10MB</div>
-      <img id="img-preview-el" class="img-preview hidden" alt="Cover preview" />
+      <div class="img-upload-placeholder" id="img-upload-placeholder">
+        <i class="ti ti-photo-up" style="font-size:28px;color:var(--ink3);display:block;margin-bottom:8px"></i>
+        <div style="font-size:14px;color:var(--ink2)">Tap to upload a cover photo</div>
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">JPG, PNG, GIF up to 10MB</div>
+      </div>
+      <div class="img-preview-wrap">
+        <img id="img-preview-el" class="img-preview hidden" alt="Cover preview" />
+        <button type="button" class="img-remove-btn" onclick="removeCoverImage(event)" aria-label="Remove cover image">
+          <i class="ti ti-x" aria-hidden="true"></i>
+        </button>
+      </div>
     </div>
     <input type="file" id="img-file" accept="image/*" class="hidden"
            onchange="previewImage(this)" aria-label="Upload cover image" />
@@ -214,9 +260,7 @@
 </div>
 
 
-<!-- ═══════════════════════════════════════
-     PRODUCTS PAGE
-═══════════════════════════════════════ -->
+
 <div id="page-products" class="products-page hidden">
   <div class="products-header">
     <div>
@@ -232,9 +276,7 @@
 </div>
 
 
-<!-- ═══════════════════════════════════════
-     CONTRIBUTE MODAL
-═══════════════════════════════════════ -->
+
 <div id="modal-contribute" class="modal-overlay hidden"
      onclick="closeContributeModal(event)" role="dialog" aria-modal="true"
      aria-labelledby="contribute-title">
@@ -263,9 +305,7 @@
 </div>
 
 
-<!-- ═══════════════════════════════════════
-     ADD / EDIT PRODUCT MODAL
-═══════════════════════════════════════ -->
+
 <div id="modal-product" class="modal-overlay hidden"
      onclick="closeProductModal(event)" role="dialog" aria-modal="true"
      aria-labelledby="product-modal-title">
@@ -297,12 +337,19 @@
     </div>
     <div class="form-group">
       <label>Cover image</label>
-      <div class="img-upload" onclick="document.getElementById('p-img-file').click()"
+      <div class="img-upload" id="p-img-upload-box" onclick="document.getElementById('p-img-file').click()"
            style="padding:20px" role="button" tabindex="0"
            onkeydown="if(event.key==='Enter')document.getElementById('p-img-file').click()">
-        <i class="ti ti-photo-up" style="font-size:22px;color:var(--ink3);display:block;margin-bottom:6px"></i>
-        <div style="font-size:13px;color:var(--ink2)">Tap to upload image</div>
-        <img id="p-img-preview" class="img-preview hidden" alt="Product image preview" />
+        <div class="img-upload-placeholder" id="p-img-upload-placeholder">
+          <i class="ti ti-photo-up" style="font-size:22px;color:var(--ink3);display:block;margin-bottom:6px"></i>
+          <div style="font-size:13px;color:var(--ink2)">Tap to upload image</div>
+        </div>
+        <div class="img-preview-wrap">
+          <img id="p-img-preview" class="img-preview hidden" alt="Product image preview" />
+          <button type="button" class="img-remove-btn" onclick="removeProductImage(event)" aria-label="Remove product image">
+            <i class="ti ti-x" aria-hidden="true"></i>
+          </button>
+        </div>
       </div>
       <input type="file" id="p-img-file" accept="image/*" class="hidden"
              onchange="previewProductImage(this)" />
@@ -318,7 +365,68 @@
 </div>
 
 
-<!-- App script -->
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <span class="logo logo-footer" style="cursor:default"><span>.</span>com<span>daily</span></span>
+      <p>Thoughtful publishing with a cleaner editorial feel.</p>
+      <div class="footer-badge">Latest, trending, and most read in one place.</div>
+    </div>
+    <div class="footer-column">
+      <h3>Explore</h3>
+      <a href="index.html#latest-story">Latest</a>
+      <a href="index.html#most-viewed">Most Viewed</a>
+      <a href="index.html#trending-now">Trending</a>
+      <a href="index.html#all-blogs">View All Blogs</a>
+    </div>
+    <div class="footer-column">
+      <h3>Pages</h3>
+      <a href="about.html">About</a>
+      <a href="contact.html">Contact</a>
+      <a href="terms.html">Terms &amp; Conditions</a>
+      <a href="privacy.html">Privacy Policy</a>
+    </div>
+    <div class="footer-column footer-contact">
+      <h3>Contact</h3>
+      <a href="mailto:dotcomdaily2143@gmail.com">dotcomdaily2143@gmail.com</a>
+      <a href="https://twitter.com/dotc0mdaily" target="_blank" rel="noopener noreferrer">@dotc0mdaily</a>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <p class="footer-copy">&copy; <span id="footer-year"></span> DotComDaily. All rights reserved.</p>
+  </div>
+</footer>
+
+
+<div id="modal-admin-login" class="modal-overlay hidden"
+     onclick="closeAdminLoginModal(event)" role="dialog" aria-modal="true"
+     aria-labelledby="admin-login-title">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3 id="admin-login-title">Admin sign in</h3>
+    <p>Sign in with your Supabase Auth admin account to write posts and manage products.</p>
+    <div class="form-group">
+      <label for="admin-email">Email</label>
+      <input type="email" id="admin-email" autocomplete="username" placeholder="you@example.com" />
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label for="admin-password">Password</label>
+      <input type="password" id="admin-password" autocomplete="current-password" placeholder="••••••••"
+             onkeydown="if(event.key==='Enter')submitAdminLogin()" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-primary" onclick="submitAdminLogin()">Sign in</button>
+      <button class="btn-outline"
+              onclick="document.getElementById('modal-admin-login').classList.add('hidden')">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
+
+
 <script src="script.js"></script>
 </body>
 </html>
+

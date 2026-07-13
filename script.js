@@ -22,8 +22,6 @@ const load = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); 
 let _hydrating = false;
 
 const save = (k, v) => {
-  // Strip base64 images before storing locally — they blow the 5MB quota fast.
-  // Images are uploaded to Supabase Storage and stored as URLs instead.
   let localVal = v;
   if ((k === POSTS_KEY || k === DRAFTS_KEY) && Array.isArray(v)) {
     localVal = v.map(p => {
@@ -35,7 +33,6 @@ const save = (k, v) => {
     localStorage.setItem(k, JSON.stringify(localVal));
   } catch (e) {
     if (e.name === 'QuotaExceededError') {
-      // localStorage full — clear old keys that are safe to regenerate from Supabase
       console.warn('localStorage quota hit — clearing cached data, Supabase is source of truth');
       [POSTS_KEY, DRAFTS_KEY, VIEWS_KEY, REACTIONS_KEY, COMMENTS_KEY].forEach(key => {
         try { localStorage.removeItem(key); } catch(_) {}
@@ -43,7 +40,6 @@ const save = (k, v) => {
       try { localStorage.setItem(k, JSON.stringify(localVal)); } catch(_) {}
     }
   }
-  // Skip Supabase sync while hydrating (reading FROM Supabase)
   if (!supabaseClient || _hydrating) return;
   if (k === POSTS_KEY)     void syncPostsToSupabase(v);
   else if (k === DRAFTS_KEY)    void syncDraftsToSupabase(v);
@@ -78,7 +74,7 @@ function mapSupabasePost(row) {
 
 async function hydrateFromSupabase() {
   if (!supabaseClient) return;
-  _hydrating = true;  // Prevent re-syncing while loading from Supabase
+  _hydrating = true;
   try {
     const { data: postRows, error: postError } = await supabaseClient.from('posts').select('*').order('created_at', { ascending: false });
     if (!postError && postRows) {
@@ -121,7 +117,7 @@ async function hydrateFromSupabase() {
   } catch (err) {
     console.warn('Supabase sync warning:', err);
   }
-  _hydrating = false;  // Re-enable syncing
+  _hydrating = false;
 }
 
 async function syncPostsToSupabase(posts) {
@@ -179,12 +175,11 @@ async function syncSubscribersToSupabase(subs) {
   await supabaseClient.from('subscribers').upsert(rows, { onConflict: 'email' });
 }
 
-/* ── Utilities ── */
 const readTime   = body => Math.max(1, Math.ceil(body.split(/\s+/).length / 200));
 const formatDate = d    => new Date(d).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
 const esc  = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const escA = s => String(s).replace(/'/g, "\\'").replace(/"/g,'&quot;');
-const isAdmin = () => !!sessionStorage.getItem('dcd_admin');
+const isAdmin = () => _isAdminSession;
 
 function parseBody(body) {
   return body.split('\n\n').map(para => {
@@ -214,7 +209,6 @@ function closeMenu() {
 window.toggleMenu = toggleMenu;
 window.closeMenu = closeMenu;
 
-// Close drawer when tapping outside
 document.addEventListener('click', e => {
   const drawer = document.getElementById('mobile-drawer');
   const ham    = document.getElementById('hamburger');
@@ -267,12 +261,66 @@ function closeSearch() {
 /* ═══════════════════════════════════════════════════
    RENDER FEED
 ═══════════════════════════════════════════════════ */
-function renderCard(post) {
-  const v        = getViews()[post.id] || post.views || 0;
-  const comments = (getComments()[post.id] || []).length;
-  const imgHtml  = post.img && post.img.startsWith('http')
-    ? `<div class="post-card-img" style="width:100%;height:200px;overflow:hidden;background:#f0f0f0;display:flex;align-items:center;justify-content:center"><img src="${post.img}" alt="${esc(post.title)}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none';this.parentElement.innerHTML+='<i class=\"ti ti-article\" style=\"font-size:36px;color:#ccc\"></i>'"/></div>`
-    : `<div class="post-card-img"><i class="ti ti-article" style="font-size:36px;color:#ccc"></i></div>`;
+const formatNumber = n => new Intl.NumberFormat('en-US').format(n || 0);
+const getPublishedPosts = () => getPosts().filter(p => !p.draft).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+
+function getPostMetrics(post) {
+  return {
+    views: getViews()[post.id] || post.views || 0,
+    comments: (getComments()[post.id] || []).length
+  };
+}
+
+function getTrendingScore(post) {
+  const { views, comments } = getPostMetrics(post);
+  const ageHours = Math.max(1, (Date.now() - new Date(post.date).getTime()) / 3600000);
+  const recencyBoost = Math.max(0, 240 - ageHours);
+  return (views * 4) + (comments * 18) + recencyBoost;
+}
+
+function renderFeaturedStory(post) {
+  if (!post) {
+    return '<div class="featured-story empty-state"><p>No posts yet.</p></div>';
+  }
+
+  const metrics = getPostMetrics(post);
+  const excerpt = esc(post.body.replace(/^##.+$/mg,'').replace(/^>.+$/mg,'').trim().split('\n\n')[0].substring(0,150));
+  const imgHtml = post.img && post.img.startsWith('http')
+    ? `<div class="featured-story-media">
+        <img src="${post.img}" alt="${esc(post.title)}" loading="lazy" onerror="this.classList.add('hidden'); this.parentElement.classList.add('has-fallback');" />
+        <div class="featured-fallback">Latest story</div>
+      </div>`
+    : `<div class="featured-story-media has-fallback"><div class="featured-fallback">Latest story</div></div>`;
+
+  return `<article class="featured-story" onclick="openPost('${post.id}')">
+    ${imgHtml}
+    <div class="featured-story-body">
+      <div class="featured-story-meta">
+        <span class="tag accent">${esc(post.cat)}</span>
+        <span class="stat"><i class="ti ti-clock" aria-hidden="true"></i>${readTime(post.body)} min</span>
+      </div>
+      <h2>${esc(post.title)}</h2>
+      <p>${excerpt}…</p>
+      <div class="featured-story-footer">
+        <span>${formatDate(post.date)}</span>
+        <div class="featured-story-metrics">
+          <span class="stat"><i class="ti ti-eye" aria-hidden="true"></i>${metrics.views}</span>
+          <span class="stat"><i class="ti ti-message" aria-hidden="true"></i>${metrics.comments}</span>
+        </div>
+      </div>
+      <button class="btn-primary featured-story-cta" onclick="event.stopPropagation();openPost('${post.id}')">Read article</button>
+    </div>
+  </article>`;
+}
+
+function renderCard(post, variant = 'default') {
+  const metrics = getPostMetrics(post);
+  const imgHtml = post.img && post.img.startsWith('http')
+    ? `<div class="post-card-img">
+        <img class="post-card-image" src="${post.img}" alt="${esc(post.title)}" loading="lazy" onerror="this.classList.add('hidden'); this.parentElement.classList.add('has-fallback');" />
+        <div class="post-card-fallback"><span>Read story</span></div>
+      </div>`
+    : `<div class="post-card-img has-fallback"><div class="post-card-fallback"><span>Read story</span></div></div>`;
   const adminActions = isAdmin()
     ? `<div class="admin-card-actions">
         <button class="admin-edit-btn" onclick="event.stopPropagation();editPost('${post.id}')">
@@ -283,7 +331,7 @@ function renderCard(post) {
           <i class="ti ti-trash" style="font-size:12px"></i>
         </button>
       </div>` : '';
-  return `<div class="post-card" onclick="openPost('${post.id}')">
+  return `<div class="post-card ${variant === 'compact' ? 'post-card--compact' : ''}" onclick="openPost('${post.id}')">
     ${imgHtml}${adminActions}
     <div class="post-card-body">
       <div class="post-card-meta">
@@ -295,8 +343,8 @@ function renderCard(post) {
       <div class="post-card-footer">
         <span style="font-size:12px;color:var(--ink3)">${formatDate(post.date)}</span>
         <div style="display:flex;gap:10px">
-          <span class="stat"><i class="ti ti-eye" aria-hidden="true"></i>${v}</span>
-          <span class="stat"><i class="ti ti-message" aria-hidden="true"></i>${comments}</span>
+          <span class="stat"><i class="ti ti-eye" aria-hidden="true"></i>${metrics.views}</span>
+          <span class="stat"><i class="ti ti-message" aria-hidden="true"></i>${metrics.comments}</span>
         </div>
       </div>
     </div>
@@ -304,10 +352,27 @@ function renderCard(post) {
 }
 
 function renderHome() {
-  const posts = getPosts().slice().reverse().filter(p => !p.draft);
-  document.getElementById('posts-grid').innerHTML = posts.length
-    ? posts.map(renderCard).join('')
-    : `<p style="color:var(--ink3);grid-column:1/-1;padding:20px 0">No posts yet.</p>`;
+  const posts = getPublishedPosts();
+  const mostViewed = posts.slice().sort((a, b) => getPostMetrics(b).views - getPostMetrics(a).views || new Date(b.date) - new Date(a.date)).slice(0, 4);
+  const trending = posts.slice().sort((a, b) => getTrendingScore(b) - getTrendingScore(a) || new Date(b.date) - new Date(a.date)).slice(0, 4);
+
+  const latestStory = document.getElementById('latest-story');
+  const mostViewedGrid = document.getElementById('most-viewed-grid');
+  const trendingGrid = document.getElementById('trending-grid');
+  const allPostsGrid = document.getElementById('all-posts-grid');
+
+  if (latestStory) latestStory.innerHTML = posts.length ? renderFeaturedStory(posts[0]) : '<div class="featured-story empty-state"><p>No posts yet.</p></div>';
+  if (mostViewedGrid) mostViewedGrid.innerHTML = mostViewed.length ? mostViewed.map(post => renderCard(post, 'compact')).join('') : '<p class="empty-state-text">No posts yet.</p>';
+  if (trendingGrid) trendingGrid.innerHTML = trending.length ? trending.map(post => renderCard(post, 'compact')).join('') : '<p class="empty-state-text">No posts yet.</p>';
+  if (allPostsGrid) allPostsGrid.innerHTML = posts.length ? posts.map(post => renderCard(post)).join('') : '<p class="empty-state-text">No posts yet.</p>';
+
+  const totalViews = posts.reduce((sum, post) => sum + getPostMetrics(post).views, 0);
+  const heroPostCount = document.getElementById('hero-post-count');
+  const heroViewCount = document.getElementById('hero-view-count');
+  const heroTrendCount = document.getElementById('hero-trend-count');
+  if (heroPostCount) heroPostCount.textContent = formatNumber(posts.length);
+  if (heroViewCount) heroViewCount.textContent = formatNumber(totalViews);
+  if (heroTrendCount) heroTrendCount.textContent = formatNumber(trending.length);
 
   const sec = document.getElementById('drafts-section');
   if (isAdmin()) { sec.classList.remove('hidden'); renderDrafts(); }
@@ -335,9 +400,8 @@ function renderDrafts() {
             </button>
           </div>
         </div>`).join('')
-    : `<p style="color:var(--ink3);font-size:13px">No drafts saved.</p>`;
+    : '<p style="color:var(--ink3);font-size:13px">No drafts saved.</p>';
 }
-
 
 /* ═══════════════════════════════════════════════════
    SINGLE POST
@@ -346,8 +410,6 @@ function openPost(id) {
   const post = getPosts().find(p => p.id === id);
   if (!post) return;
   closeMenu();
-
-  // Count view
   const views   = getViews();
   const viewKey = 'viewed_' + id;
   if (!sessionStorage.getItem(viewKey)) {
@@ -355,8 +417,6 @@ function openPost(id) {
     save(VIEWS_KEY, views);
     sessionStorage.setItem(viewKey, '1');
   }
-
-  // OG meta
   document.getElementById('og-title').content  = post.title + ' — DotComDaily';
   document.getElementById('og-desc').content   = post.seo   || post.body.substring(0,160);
   document.getElementById('og-image').content  = post.img   || '';
@@ -460,7 +520,6 @@ function openPost(id) {
 function renderComments(comments) {
   if (!comments.length)
     return `<p style="color:var(--ink3);font-size:14px;padding:14px 0">No comments yet — be the first!</p>`;
-  // Deduplicate comments by ID to prevent duplicates from sync
   const seen = new Set();
   const unique = comments.filter(c => {
     const key = c.id || (c.name + c.text + c.date);
@@ -482,8 +541,6 @@ function addComment(postId) {
   if (!text) { showToast('Write something first!'); return; }
   const all = getComments();
   if (!all[postId]) all[postId] = [];
-  
-  // Prevent adding duplicate comments with same ID
   const newCommentId = makeId();
   const isDuplicate = all[postId].some(c => c.id === newCommentId);
   if (isDuplicate) { showToast('Comment already exists'); return; }
@@ -493,12 +550,8 @@ function addComment(postId) {
   document.getElementById('c-name').value  = '';
   document.getElementById('c-email').value = '';
   document.getElementById('c-text').value  = '';
-  
-  // Render and update count
   const comments = all[postId];
   document.getElementById('comments-list').innerHTML = renderComments(comments);
-  
-  // Count deduplicated comments for accurate display
   const seen = new Set();
   const uniqueCount = comments.filter(c => {
     const key = c.id || (c.name + c.text + c.date);
@@ -509,6 +562,7 @@ function addComment(postId) {
   document.getElementById('comment-count-h').textContent = uniqueCount;
   showToast('Comment posted!');
 }
+
 
 
 /* ═══════════════════════════════════════════════════
@@ -550,15 +604,54 @@ function react(postId, type) {
 let _pendingCoverFile    = null;
 let _pendingProductFile  = null;
 
+function setCoverPreview(src) {
+  const el  = document.getElementById('img-preview-el');
+  const box = document.getElementById('img-upload-box');
+  el.src = src;
+  el.classList.remove('hidden');
+  if (box) box.classList.add('has-image');
+}
+function clearCoverPreview() {
+  const el  = document.getElementById('img-preview-el');
+  const box = document.getElementById('img-upload-box');
+  el.src = '';
+  el.classList.add('hidden');
+  if (box) box.classList.remove('has-image');
+  _pendingCoverFile = null;
+}
+function removeCoverImage(e) {
+  if (e) e.stopPropagation();
+  clearCoverPreview();
+}
+
+function setProductPreview(src) {
+  const el  = document.getElementById('p-img-preview');
+  const box = document.getElementById('p-img-upload-box');
+  el.src = src;
+  el.classList.remove('hidden');
+  if (box) box.classList.add('has-image');
+}
+function clearProductPreview() {
+  const el  = document.getElementById('p-img-preview');
+  const box = document.getElementById('p-img-upload-box');
+  el.src = '';
+  el.classList.add('hidden');
+  if (box) box.classList.remove('has-image');
+  _pendingProductFile = null;
+}
+function removeProductImage(e) {
+  if (e) e.stopPropagation();
+  clearProductPreview();
+}
+
+window.removeCoverImage   = removeCoverImage;
+window.removeProductImage = removeProductImage;
+
 function previewImage(input) {
   const file = input.files[0]; if (!file) return;
   _pendingCoverFile = file;
   const r = new FileReader();
-  r.onload = e => {
-    const el = document.getElementById('img-preview-el');
-    el.src = e.target.result;   // local preview only — not stored
-    el.classList.remove('hidden');
-  };
+  r.onload = e => setCoverPreview(e.target.result); // local preview only — not stored
   r.readAsDataURL(file);
 }
 
@@ -566,11 +659,7 @@ function previewProductImage(input) {
   const file = input.files[0]; if (!file) return;
   _pendingProductFile = file;
   const r = new FileReader();
-  r.onload = e => {
-    const el = document.getElementById('p-img-preview');
-    el.src = e.target.result;
-    el.classList.remove('hidden');
-  };
+  r.onload = e => setProductPreview(e.target.result);
   r.readAsDataURL(file);
 }
 
@@ -579,7 +668,7 @@ async function uploadImageToSupabase(file, bucket) {
     console.warn('Image upload skipped: file=' + !!file + ', supabaseClient=' + !!supabaseClient);
     return null;
   }
-  try {
+try {
     const ext  = file.name.split('.').pop() || 'jpg';
     const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
     console.log('Uploading image to Supabase:', path);
@@ -625,14 +714,13 @@ function clearWriteForm() {
   ['w-title','w-body','w-seo'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('w-cat').selectedIndex = 0;
   document.getElementById('w-edit-id').value     = '';
-  const prev = document.getElementById('img-preview-el');
-  prev.classList.add('hidden'); prev.src = '';
-  _pendingCoverFile = null;  // clear any pending upload
+  clearCoverPreview();  // also clears any pending upload
   document.getElementById('write-heading').textContent  = 'Write a new post';
   document.getElementById('write-subtitle').textContent = 'Draft autosaves every 30 seconds';
 }
 
 async function publishPost() {
+  if (!isAdmin()) { showToast('Please sign in as admin first'); showAdminPrompt(); return; }
   const d = getWriteFormData();
   if (!d.title || !d.body) { showToast('Title and content are required'); return; }
 
@@ -651,22 +739,28 @@ async function publishPost() {
   }
 
   const editId = document.getElementById('w-edit-id').value;
-  let posts = getPosts();
-  if (editId) {
-    posts = posts.map(p => p.id === editId ? { ...p, ...d, date: p.date, draft: false } : p);
-    save(POSTS_KEY, posts);
-    save(DRAFTS_KEY, getDrafts().filter(dr => dr.id !== editId));
+  const posts = getPosts();
+  const existingPost = editId ? posts.find(p => p.id === editId) : null;
+
+  if (existingPost) {
+    const updatedPosts = posts.map(p => p.id === editId ? { ...p, ...d, date: p.date, draft: false } : p);
+    save(POSTS_KEY, updatedPosts);
+    if (editId) save(DRAFTS_KEY, getDrafts().filter(dr => dr.id !== editId));
     showToast('Post updated!');
   } else {
-    posts.push({ id: makeId(), ...d, date: new Date().toISOString(), views: 0, draft: false });
-    save(POSTS_KEY, posts);
+    const publishedPost = { id: makeId(), ...d, date: new Date().toISOString(), views: 0, draft: false };
+    const updatedPosts = [...posts, publishedPost];
+    save(POSTS_KEY, updatedPosts);
+    if (editId) save(DRAFTS_KEY, getDrafts().filter(dr => dr.id !== editId));
     showToast('Post published!');
   }
+
   clearWriteForm();
   showPage('home');
 }
 
 async function saveDraft() {
+  if (!isAdmin()) { showToast('Please sign in as admin first'); showAdminPrompt(); return; }
   const d = getWriteFormData();
   if (!d.title && !d.body) { showToast('Write something first'); return; }
 
@@ -678,6 +772,7 @@ async function saveDraft() {
     } else {
       console.warn('Image upload failed - saving draft without image');
     }
+    if (url) d.img = url;
     _pendingCoverFile = null;
   }
 
@@ -711,12 +806,15 @@ function editDraft(id) {
   document.getElementById('w-seo').value     = draft.seo   || '';
   const cats = ['Thoughts','Technology','Life','Business','Culture','Opinion'];
   document.getElementById('w-cat').selectedIndex = Math.max(0, cats.indexOf(draft.cat));
-  if (draft.img) {
-    const el = document.getElementById('img-preview-el');
-    el.src = draft.img; el.classList.remove('hidden');
-  }
+  if (draft.img) setCoverPreview(draft.img);
   document.getElementById('write-heading').textContent = 'Edit draft';
   showPage('write');
+}
+
+async function deletePostRowFromSupabase(id) {
+  if (!supabaseClient) return;
+  const { error } = await supabaseClient.from('posts').delete().eq('id', id);
+  if (error) console.error('Failed to delete post row from Supabase:', error.message);
 }
 
 function publishDraft(id) {
@@ -729,13 +827,16 @@ function publishDraft(id) {
     seo:draft.seo||'', img:draft.img||'', date:new Date().toISOString(), views:0, draft:false });
   save(POSTS_KEY, posts);
   save(DRAFTS_KEY, drafts.filter(d => d.id !== id));
+  void deletePostRowFromSupabase(id);
   renderDrafts(); renderHome();
   showToast('Draft published!');
 }
 
 function deleteDraft(id) {
+  if (!isAdmin()) { showToast('Please sign in as admin first'); return; }
   if (!confirm('Delete this draft?')) return;
   save(DRAFTS_KEY, getDrafts().filter(d => d.id !== id));
+  void deletePostRowFromSupabase(id);
   renderDrafts();
   showToast('Draft deleted');
 }
@@ -749,18 +850,17 @@ function editPost(id) {
   document.getElementById('w-seo').value     = post.seo || '';
   const cats = ['Thoughts','Technology','Life','Business','Culture','Opinion'];
   document.getElementById('w-cat').selectedIndex = Math.max(0, cats.indexOf(post.cat));
-  if (post.img) {
-    const el = document.getElementById('img-preview-el');
-    el.src = post.img; el.classList.remove('hidden');
-  }
+  if (post.img) setCoverPreview(post.img);
   document.getElementById('write-heading').textContent  = 'Edit post';
   document.getElementById('write-subtitle').textContent = 'Changes will update the live post';
   showPage('write');
 }
 
 function deletePost(id) {
+  if (!isAdmin()) { showToast('Please sign in as admin first'); return; }
   if (!confirm('Delete this post permanently?')) return;
   save(POSTS_KEY, getPosts().filter(p => p.id !== id));
+  void deletePostRowFromSupabase(id);
   showPage('home');
   showToast('Post deleted');
 }
@@ -810,7 +910,7 @@ function renderProducts() {
 
 function openProductModal(editId) {
   ['p-name','p-desc','p-price','p-url'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('p-img-preview').classList.add('hidden');
+  clearProductPreview();
   document.getElementById('p-edit-id').value = editId || '';
   if (editId) {
     const p = getProducts().find(x => x.id === editId);
@@ -819,7 +919,7 @@ function openProductModal(editId) {
       document.getElementById('p-desc').value  = p.desc  || '';
       document.getElementById('p-price').value = p.price || '';
       document.getElementById('p-url').value   = p.url   || '';
-      if (p.img) { const el=document.getElementById('p-img-preview'); el.src=p.img; el.classList.remove('hidden'); }
+      if (p.img) setProductPreview(p.img);
       document.getElementById('product-modal-title').textContent = 'Edit product';
     }
   } else {
@@ -829,15 +929,15 @@ function openProductModal(editId) {
 }
 
 async function saveProduct() {
+  if (!isAdmin()) { showToast('Please sign in as admin first'); return; }
   const name = document.getElementById('p-name').value.trim();
   const url  = document.getElementById('p-url').value.trim();
   if (!name || !url) { showToast('Name and URL are required'); return; }
 
-  // Upload product image if a new file is pending
   let img = '';
   const imgEl = document.getElementById('p-img-preview');
   if (imgEl.src && !imgEl.classList.contains('hidden') && imgEl.src.startsWith('http')) {
-    img = imgEl.src; // already uploaded URL
+    img = imgEl.src;
   } else if (_pendingProductFile) {
     const uploaded = await uploadImageToSupabase(_pendingProductFile, 'covers');
     if (uploaded) img = uploaded;
@@ -857,6 +957,7 @@ async function saveProduct() {
 }
 
 function deleteProduct(id) {
+  if (!isAdmin()) { showToast('Please sign in as admin first'); return; }
   if (!confirm('Delete this product?')) return;
   save(PRODUCTS_KEY, getProducts().filter(p => p.id !== id));
   renderProducts();
@@ -954,17 +1055,18 @@ function downloadRSS() {
 }
 
 
+
 /* ═══════════════════════════════════════════════════
    PAGE NAV
 ═══════════════════════════════════════════════════ */
 function showPage(name) {
-  if (name === 'write' && !isAdmin()) { showAdminPrompt(); return; }
+  if (name === 'write' && !isAdmin()) { _pendingWrite = true; showAdminPrompt(); return; }
   clearInterval(autoSaveTimer);
   closeMenu();
   ['home','post','write','products'].forEach(p => {
     document.getElementById('page-' + p).classList.toggle('hidden', p !== name);
   });
-  if (name === 'home')     { renderHome(); document.getElementById('page-title').textContent = 'DotComDaily — Thoughts That Hit Different'; }
+  if (name === 'home')     { renderHome(); document.getElementById('page-title').textContent = 'DotComDaily � Latest, Trending & Most Viewed Blogs'; }
   if (name === 'products') renderProducts();
   if (name === 'write')    startAutoSave();
   window.scrollTo(0, 0);
@@ -986,10 +1088,9 @@ window.showPage = showPage;
 window.setActive = setActive;
 
 
-/* ═══════════════════════════════════════════════════
-   TOAST
-═══════════════════════════════════════════════════ */
+  
 let toastTimer;
+
 function showToast(msg) {
   document.querySelectorAll('.toast').forEach(t => t.remove());
   const t = document.createElement('div');
@@ -1001,56 +1102,75 @@ function showToast(msg) {
 }
 
 
-/* ═══════════════════════════════════════════════════
-   ADMIN AUTH
-═══════════════════════════════════════════════════ */
-// Hash of your admin password.
-// Generate your own at: https://emn178.github.io/online-tools/sha256.html
-// The default value below matches sha256('password').
-const ADMIN_HASH = '6d0e4ce5152510bf299db98468ce1e8971a493c13a11fa0a7bf6b713aca35fba';
-const LEGACY_ADMIN_HASH = 'Fwwk7Qdf0xNk0x/8eagq4UG5++RY8TacnrA8it1YLUg=';
 
-async function sha256(msg) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+let _isAdminSession = false;
+
+function updateAdminUI() {
+  document.querySelectorAll('.admin-only-ui').forEach(el => el.classList.toggle('hidden', !isAdmin()));
 }
 
-async function sha256Base64(msg) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg));
-  let binary = '';
-  new Uint8Array(buf).forEach(b => binary += String.fromCharCode(b));
-  return btoa(binary);
-}
+async function initAdminAuth() {
+  if (!supabaseClient) return;
+  const { data } = await supabaseClient.auth.getSession();
+  _isAdminSession = !!data?.session;
+  updateAdminUI();
+  renderHome();
 
-async function showAdminPrompt() {
-  const pin = prompt('Admin password:');
-  if (pin === null || pin === '') return;
-  const hash = await sha256(pin.trim());
-  const hashB64 = await sha256Base64(pin.trim());
-  if (hash === ADMIN_HASH.toLowerCase() || hashB64 === LEGACY_ADMIN_HASH) {
-    sessionStorage.setItem('dcd_admin', '1');
+  supabaseClient.auth.onAuthStateChange((_event, session) => {
+    _isAdminSession = !!session;
+    updateAdminUI();
     renderHome();
-    showToast('Admin mode on ✓');
-    // If we were trying to go to write page, go there now
-    if (_pendingWrite) { _pendingWrite = false; showPage('write'); }
-  } else {
-    showToast('Wrong password');
-  }
+    const productsPage = document.getElementById('page-products');
+    if (productsPage && !productsPage.classList.contains('hidden')) renderProducts();
+  });
 }
+
+function showAdminPrompt() {
+  if (!supabaseClient) { showToast('Supabase is not configured — admin login unavailable'); return; }
+  document.getElementById('admin-email').value    = '';
+  document.getElementById('admin-password').value = '';
+  document.getElementById('modal-admin-login').classList.remove('hidden');
+  setTimeout(() => document.getElementById('admin-email').focus(), 50);
+}
+
+function closeAdminLoginModal(e) {
+  if (e.target.id === 'modal-admin-login') document.getElementById('modal-admin-login').classList.add('hidden');
+}
+
+async function submitAdminLogin() {
+  const email    = document.getElementById('admin-email').value.trim();
+  const password = document.getElementById('admin-password').value;
+  if (!email || !password) { showToast('Email and password are required'); return; }
+
+  const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  if (error) { showToast('Sign-in failed: ' + error.message); return; }
+
+  document.getElementById('modal-admin-login').classList.add('hidden');
+  showToast('Signed in ✓');
+  if (_pendingWrite) { _pendingWrite = false; showPage('write'); }
+}
+
+async function adminLogout() {
+  if (!supabaseClient) return;
+  await supabaseClient.auth.signOut();
+  showToast('Signed out');
+  showPage('home');
+}
+
+window.showAdminPrompt      = showAdminPrompt;
+window.closeAdminLoginModal = closeAdminLoginModal;
+window.submitAdminLogin     = submitAdminLogin;
+window.adminLogout          = adminLogout;
 
 let _pendingWrite = false;
 
-// ── Keyboard shortcut (3 methods so one always works) ──────────────────────
 
-// Method 1: Ctrl + Shift + A  (most reliable, works everywhere)
 document.addEventListener('keydown', e => {
   if (e.ctrlKey && e.shiftKey && e.key === 'A') {
     e.preventDefault();
     showAdminPrompt();
   }
 });
-
-// Method 2: Triple-click the logo (works on mobile too)
 let _logoClicks = 0, _logoTimer;
 const logoEl = document.querySelector('.logo');
 if (logoEl) {
@@ -1062,8 +1182,6 @@ if (logoEl) {
     _logoTimer = setTimeout(() => { _logoClicks = 0; }, 800);
   });
 }
-
-// Method 3: Type the sequence "dotcom" anywhere (no special chars, mobile-friendly)
 let _ks = '';
 document.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1076,5 +1194,9 @@ document.addEventListener('keydown', e => {
 /* ═══════════════════════════════════════════════════
    BOOT
 ═══════════════════════════════════════════════════ */
+const footerYearEl = document.getElementById('footer-year');
+if (footerYearEl) footerYearEl.textContent = new Date().getFullYear();
+
 renderHome();
 void hydrateFromSupabase();
+void initAdminAuth();
