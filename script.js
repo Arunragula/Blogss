@@ -1066,7 +1066,7 @@ function showPage(name) {
   ['home','post','write','products'].forEach(p => {
     document.getElementById('page-' + p).classList.toggle('hidden', p !== name);
   });
-  if (name === 'home')     { renderHome(); document.getElementById('page-title').textContent = 'DotComDaily � Latest, Trending & Most Viewed Blogs'; }
+  if (name === 'home')     { renderHome(); document.getElementById('page-title').textContent = 'DotComDaily  Latest, Trending & Most Viewed Blogs'; }
   if (name === 'products') renderProducts();
   if (name === 'write')    startAutoSave();
   window.scrollTo(0, 0);
